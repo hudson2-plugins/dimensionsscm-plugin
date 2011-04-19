@@ -59,8 +59,8 @@
   </build>
 
   <scm>
-      <connection>scm:git:git://java.net/hudson-plugins~dimensionsscm</connection>
-      <developerConnection>scm:git:ssh://git@java.net/hudson-plugins~dimensionsscm</developerConnection>
+      <connection>scm:git:git://github.com/hudson-plugins/dimensionsscm-plugin.git</connection>
+      <developerConnection>scm:git:git@github.com:hudson-plugins/dimensionsscm-plugin.git</developerConnection>
   </scm>
 
   <repositories>
