@@ -11,7 +11,7 @@
   <groupId>hudson.plugins</groupId>
   <artifactId>dimensionsscm</artifactId>
   <packaging>hpi</packaging>
-  <version>0.8.1-SNAPSHOT</version>
+  <version>0.8.1</version>
   <name>Dimensions SCM plugin</name>
   <description>Dimension SCM plugin for Hudson</description>
   <url>http://wiki.hudson-ci.org/display/HUDSON/Dimensions+Plugin</url>
