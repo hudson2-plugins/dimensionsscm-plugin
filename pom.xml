@@ -8,10 +8,10 @@
     <version>1.398</version>
   </parent>
 
-  <groupId>hudson.plugins</groupId>
+  <groupId>org.jvnet.hudson.plugins</groupId>
   <artifactId>dimensionsscm</artifactId>
   <packaging>hpi</packaging>
-  <version>0.8.2-SNAPSHOT</version>
+  <version>0.8.1-SNAPSHOT</version>
   <name>Dimensions SCM plugin</name>
   <description>Dimension SCM plugin for Hudson</description>
   <url>http://wiki.hudson-ci.org/display/HUDSON/Dimensions+Plugin</url>
