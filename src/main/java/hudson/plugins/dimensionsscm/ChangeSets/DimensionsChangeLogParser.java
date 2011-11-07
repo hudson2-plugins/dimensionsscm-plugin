@@ -96,13 +96,12 @@ import hudson.plugins.dimensionsscm.DimensionsChangeSet;
 import hudson.plugins.dimensionsscm.DimensionsChangeSetList;
 import hudson.plugins.dimensionsscm.Logger;
 
-import org.apache.commons.digester.Digester;
 import org.apache.commons.io.IOUtils;
 import org.xml.sax.SAXException;
 
 import hudson.model.AbstractBuild;
 import hudson.scm.ChangeLogParser;
-import hudson.util.Digester2;
+import org.apache.commons.digester3.Digester;
 
 import java.io.File;
 import java.io.FileReader;
@@ -140,7 +139,7 @@ public class DimensionsChangeLogParser extends ChangeLogParser
                                             throws IOException, SAXException
     {
         List<DimensionsChangeSet> changesetList = new ArrayList<DimensionsChangeSet>();
-        Digester digester = new Digester2();
+        Digester digester = new Digester();
         digester.push(changesetList);
 
         digester.addObjectCreate("*/changeset", DimensionsChangeSet.class);
