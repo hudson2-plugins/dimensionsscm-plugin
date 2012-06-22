@@ -151,7 +151,8 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.TimeZone;
-
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.text.Collator;
 
 import java.net.URI;
@@ -174,7 +175,10 @@ public class DimensionsAPI implements Serializable {
     private static final String BAD_BASE_DATABASE_SPEC = "The <dimensions> task needs a valid 'database' attribute, in the format 'dbname@dbconn'"; //$NON-NLS-1$
     private static final String NO_COMMAND_LINE = "The <run> nested element need a valid 'cmd' attribute"; //$NON-NLS-1$
     private static final String SRCITEM_SRCPATH_CONFLICT = "The <getcopy> nested element needs exactly one of the 'srcpath' or 'srcitem' attributes"; //$NON-NLS-1$
-
+	
+	// Thread safe key (sequence) generator
+	private static AtomicLong sequence = new AtomicLong(1);
+	
     // Dimensions server details
     private String dmServer;
     private String dmDb;
@@ -195,7 +199,7 @@ public class DimensionsAPI implements Serializable {
     private String dateType = "edit";
     private boolean allRevisions = false;
     private int version = -1;
-    private HashMap conns = new HashMap();
+    private ConcurrentHashMap conns = new ConcurrentHashMap();
     private PrintStream listener;
 
     // Inline connection cache
@@ -367,10 +371,10 @@ public class DimensionsAPI implements Serializable {
             throws IllegalArgumentException, DimensionsRuntimeException {
 
         DimensionsConnection connection = null;
-        long key = Calendar.getInstance().getTimeInMillis();
+        long key = sequence.getAndIncrement();
 
         if (conns == null) {
-            conns = new HashMap();
+            conns = new ConcurrentHashMap();
         }
 
         dmServer = server;
@@ -402,8 +406,11 @@ public class DimensionsAPI implements Serializable {
             Logger.Debug("Getting Dimensions connection...");
             connection = DimensionsConnectionManager.getConnection(details);
             if (connection!=null) {
-                Logger.Debug("Storing details for key "+key+"...");
-                conns.put(key, new ConnectionCache(connection));
+                Logger.Debug("Storing details for atomic key "+key+"...");
+				if (conns.putIfAbsent(key, new ConnectionCache(connection)) != null)
+					Logger.Debug("Key is not unique, as already exists within the cache: "+key);
+				
+                Logger.Debug("Just added connection number "+conns.size());
                 if (version < 0) {
                     version = 2009;
                     // Get the server version
@@ -435,6 +442,10 @@ public class DimensionsAPI implements Serializable {
                                 version = 2009;
                             else if (serverx.startsWith("201"))
                                 version = 2010;
+                            else if (serverx.startsWith("12.1"))
+                                version = 2010;
+                            else if (serverx.startsWith("12.2"))
+                                version = 2010;
                             else
                                 version = 2009;
                             Logger.Debug("Version to process set to " + version);
@@ -452,30 +463,73 @@ public class DimensionsAPI implements Serializable {
         }
         return -1;
     }
-
-
+	
+    /**
+     * Creates a Dimensions session using the supplied login credentials and
+     * server details.  With additional tracing from supplied build details.
+     *
+     * @param userID
+     *            Dimensions user ID
+     * @param password
+     *            Dimensions password
+     * @param database
+     *            base database name
+     * @param server
+     *            hostname of the remote dimensions server
+     * @param AbstractBuild build
+	 *            Details of the invoking build
+	 * @return a long
+     * @throws DimensionsRuntimeException, IllegalArgumentException
+     */
+    public final long login(String userID, String password,
+			String database, String server, AbstractBuild build)
+			throws IllegalArgumentException, DimensionsRuntimeException {
+		Logger.Debug("DimensionsAPI.login - build number: \""+build.getNumber()+"\", project: \""+build.getProject().getName()+"\"");
+		if (build.getBuiltOn().getNodeName() == null)
+			Logger.Debug("  build.getBuiltOn().getNodeName() is null!");
+		else
+			Logger.Debug("  build.getBuiltOn().getNodeName(): \""+build.getBuiltOn().getNodeName()+"\"");
+		
+		final long key = login(userID, password, database, server);
+		Logger.Debug("  key: \""+key+"\"");
+		return key;
+	}
+	
     /**
      * Disconnects from the Dimensions repository
      */
     public final void logout(long key) {
         if (conns == null) {
+			Logger.Debug("Failed to close connection for key \""+key+"\" - no connections exist!");
             return;
         }
-
+		
         DimensionsConnection connection = getCon(key);
-        if (connection != null) {
+		if (connection == null)
+			Logger.Debug("Failed to close connection for key \""+key+"\" - connection not found!");
+		else {
             try {
-                Logger.Debug("Closing connection to Dimensions...");
+                Logger.Debug("Closing connection to Dimensions for key \""+key+"\"...");
                 connection.close();
             } catch (DimensionsNetworkException dne) {
+				Logger.Debug("Exception thrown: DimensionsNetworkException");
             } catch (DimensionsRuntimeException dne) {
+				Logger.Debug("Exception thrown: DimensionsRuntimeException");
             }
             this.conns.remove(key);
             Logger.Debug("Now have "+conns.size()+" connections in use...");
         }
     }
-
-
+	
+    /**
+     * Disconnects from the Dimensions repository, with additional tracing from
+	 * supplied build details
+     */
+    public final void logout(long key, AbstractBuild build) {
+		Logger.Debug("DimensionsAPI.logout - build number: \""+build.getNumber()+"\", project: \""+build.getProject().getName()+"\"");
+		logout(key);
+	}
+	
     /**
      * Parses a base database specification
      * <p>
@@ -591,8 +645,9 @@ public class DimensionsAPI implements Serializable {
      *      @param final boolean doRevert
      *      @param final boolean doExpand
      *      @param final boolean doNoMetadata
+     *      @param final boolean doNoTouch
      *      @param final String permissions
-     *      @param final String eol	 
+     *      @param final String eol
      *  Return:
      *      @return boolean
      *-----------------------------------------------------------------
@@ -607,8 +662,9 @@ public class DimensionsAPI implements Serializable {
                             final boolean doRevert,
                             final boolean doExpand,
                             final boolean doNoMetadata,
+							final boolean doNoTouch,
                             final String permissions,
-							final String eol)
+                            final String eol)
                     throws IOException, InterruptedException
     {
         boolean bRet = false;
@@ -629,6 +685,11 @@ public class DimensionsAPI implements Serializable {
             }
 
             {
+                // Disable the new refactoring UPDATE options
+                if (version == 2010) {
+                    coCmd += " /LEGACY_MODE ";
+                }
+
                 String cmd = coCmd;
                 String projDir = (projectDir!=null) ? projectDir.getRemote() : null;
 
@@ -660,12 +721,12 @@ public class DimensionsAPI implements Serializable {
                     }
                 }
 
-				if (eol != null && eol.length() > 0) {
+                if (eol != null && eol.length() > 0) {
                     if (!eol.equals("DEFAULT")) {
                         cmd += "/EOL="+eol;
                     }
                 }
-				
+
                 cmd += "/USER_DIR=\"" + workspaceName.getRemote() + "\" ";
 
                 if (doRevert)
@@ -674,6 +735,8 @@ public class DimensionsAPI implements Serializable {
                     cmd += " /EXPAND";
                 if (doNoMetadata)
                     cmd += " /NOMETADATA";
+                if (doNoTouch)
+                    cmd += " /NOTOUCH";
 
                 if (requests == null) {
                     getLogger().println("[DIMENSIONS] Checking out directory '"+((projDir!=null) ? projDir : "/")+"'...");
@@ -1194,7 +1257,7 @@ public class DimensionsAPI implements Serializable {
             if (projectId != null) {
                 ciCmd += " /USER_FILELIST=\""+cmdFile.getAbsolutePath()+"\"";
                 ciCmd += " /WORKSET=\""+projectId+"\"";
-                ciCmd += " /COMMENT=\"Build artifacts saved by Hudson for job '"+projectName+"' - build "+buildNo+"\"";
+                ciCmd += " /COMMENT=\"Build artifacts saved by Hudson/Jenkins for job '"+projectName+"' - build "+buildNo+"\"";
                 ciCmd += " /USER_DIRECTORY=\""+rootDir.getRemote()+"\"";
                 if (requests != null && requests.length() > 0) {
                     if (requests.indexOf(",")==0) {
@@ -1278,7 +1341,7 @@ public class DimensionsAPI implements Serializable {
                     cId = cId.replace("[BUILDNO]",buildNo.toString());
                     cId = cId.replace("[CURRENT_DATE]",DateUtils.getNowStrDateVerbose().trim());
                     if (blnId != null && blnId.length() > 0)
-						cId = cId.replace("[DM_BASELINE]",blnId.substring(blnId.indexOf(":")+1).trim());
+                        cId = cId.replace("[DM_BASELINE]",blnId.substring(blnId.indexOf(":")+1).trim());
 
                     cblId.append("\""+projectId.substring(0,projectId.indexOf(":"))+":"+cId+"\"");
                 } else {
@@ -1319,7 +1382,7 @@ public class DimensionsAPI implements Serializable {
                 }
 
                 if (!revisedBln) {
-                    cmd += " /DESCRIPTION=\"Baseline created by Hudson for job '"+build.getProject().getName()+"' - build "+build.getNumber()+"\"";
+                    cmd += " /DESCRIPTION=\"Baseline created by Hudson/Jenkins for job '"+build.getProject().getName()+"' - build "+build.getNumber()+"\"";
                 }
 
 
@@ -1366,7 +1429,7 @@ public class DimensionsAPI implements Serializable {
                 if (state != null && state.length() > 0) {
                     cmd += " /STAGE=\""+state+"\"";
                 }
-                cmd += " /COMMENT=\"Project Baseline deployed by Hudson for job '"+build.getProject().getName()+"' - build "+build.getNumber()+"\"";
+                cmd += " /COMMENT=\"Project Baseline deployed by Hudson/Jenkins for job '"+build.getProject().getName()+"' - build "+build.getNumber()+"\"";
                 DimensionsResult res = run(connection,cmd);
                 if (res != null ) {
                     Logger.Debug("Deploying baseline - "+res.getMessage());
@@ -1410,7 +1473,7 @@ public class DimensionsAPI implements Serializable {
                 if (state != null && state.length() > 0) {
                     cmd += " /STATUS=\""+state+"\"";
                 }
-                cmd += " /COMMENT=\"Project Baseline action by Hudson for job '"+build.getProject().getName()+"' - build "+build.getNumber()+"\"";
+                cmd += " /COMMENT=\"Project Baseline action by Hudson/Jenkins for job '"+build.getProject().getName()+"' - build "+build.getNumber()+"\"";
                 DimensionsResult res = run(connection,cmd);
                 if (res != null ) {
                     Logger.Debug("Actioning baseline - "+res.getMessage());
@@ -1687,7 +1750,7 @@ public class DimensionsAPI implements Serializable {
             if (host.endsWith("/"))
                 host = host.substring(0,host.length()-1);
 
-			if (host.startsWith("http:"))
+            if (host.startsWith("http:"))
                 host = host.substring(7,host.length());
             else if (host.startsWith("https:"))
                 host = host.substring(8,host.length());

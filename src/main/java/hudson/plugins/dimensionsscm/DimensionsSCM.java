@@ -138,6 +138,7 @@ import hudson.util.Scrambler;
 import hudson.util.VariableResolver;
 
 // General imports
+import java.lang.IllegalStateException;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.FileWriter;
@@ -208,7 +209,10 @@ public class DimensionsSCM extends SCM implements Serializable
     private boolean canJobRevert;
     private boolean canJobExpand;
     private boolean canJobNoMetadata;
+    private boolean canJobNoTouch;
+    private boolean forceAsSlave;
 
+	
     DimensionsAPI dmSCM;
     DimensionsSCMRepositoryBrowser browser;
 
@@ -330,6 +334,14 @@ public class DimensionsSCM extends SCM implements Serializable
     }
 
     /*
+     * Gets the no touch .
+     * @return the notouch
+     */
+    public boolean isCanJobNoTouch() {
+        return this.canJobNoTouch;
+    }
+	
+    /*
      * Gets the update .
      * @return the update
      */
@@ -359,6 +371,14 @@ public class DimensionsSCM extends SCM implements Serializable
      */
     public boolean isCanJobRevert() {
         return this.canJobRevert;
+    }
+	
+    /*
+     * Gets force as slave
+     * @return forceAsSlave
+     */
+    public boolean isForceAsSlave() {
+        return this.forceAsSlave;
     }
 
     @Extension
@@ -457,7 +477,7 @@ public class DimensionsSCM extends SCM implements Serializable
              jobServer,jobDatabase,
              canJobUpdate,jobTimeZone,
              jobWebUrl,directory,"DEFAULT","DEFAULT",
-			 false,false);
+			 false,false,false, false);
     }
 
 
@@ -478,15 +498,42 @@ public class DimensionsSCM extends SCM implements Serializable
                          String permissions,
 						 String  eol)
     {
-        this(project,null,workarea,canJobDelete,
+        this(project,folders,workarea,canJobDelete,
              canJobForce,canJobRevert,
              jobUserName,jobPasswd,
              jobServer,jobDatabase,
              canJobUpdate,jobTimeZone,
-             jobWebUrl,directory,permissions,eol,false,false);
+             jobWebUrl,directory,permissions,eol,false,false,false, false);
     }
-
-
+	
+    public DimensionsSCM(String project,
+                         String[] folders,
+                         String workarea,
+                         boolean canJobDelete,
+                         boolean canJobForce,
+                         boolean canJobRevert,
+                         String jobUserName,
+                         String jobPasswd,
+                         String jobServer,
+                         String jobDatabase,
+                         boolean canJobUpdate,
+                         String jobTimeZone,
+                         String jobWebUrl,
+                         String directory,
+                         String permissions,
+						 String eol,
+                         boolean canJobExpand,
+                         boolean canJobNoMetadata)
+    {
+		this(project,folders,workarea,canJobDelete,
+             canJobForce,canJobRevert,
+             jobUserName,jobPasswd,
+             jobServer,jobDatabase,
+             canJobUpdate,jobTimeZone,
+             jobWebUrl,directory,permissions,eol,
+			 canJobExpand,canJobNoMetadata,false, false);
+	}
+	
     /*
      *-----------------------------------------------------------------
      *  FUNCTION SPECIFICATION
@@ -505,9 +552,11 @@ public class DimensionsSCM extends SCM implements Serializable
      *      @param String jobDatabase
      *      @param String directory
      *      @param String permissions
-	 *      @param String eol
+     *      @param String eol
      *      @param boolean canJobExpand
      *      @param boolean canJobNoMetadata
+     *      @param boolean canJobNoTouch
+     *      @param boolean forceAsSlave	 
      *  Return:
      *      @return void
      *-----------------------------------------------------------------
@@ -530,7 +579,9 @@ public class DimensionsSCM extends SCM implements Serializable
                          String permissions,
 						 String eol,
                          boolean canJobExpand,
-                         boolean canJobNoMetadata)
+                         boolean canJobNoMetadata,
+						 boolean canJobNoTouch,
+                         boolean forceAsSlave)
     {
         // Check the folders specified have data specified
         if (folders != null) {
@@ -576,6 +627,8 @@ public class DimensionsSCM extends SCM implements Serializable
         this.canJobRevert = canJobRevert;
         this.canJobExpand = canJobExpand;
         this.canJobNoMetadata = canJobNoMetadata;
+		this.canJobNoTouch = canJobNoTouch;
+		this.forceAsSlave = forceAsSlave;
 
         this.jobTimeZone = (Util.fixEmptyAndTrim(jobTimeZone) == null ? getDescriptor().getTimeZone() : jobTimeZone);
         this.jobWebUrl = (Util.fixEmptyAndTrim(jobWebUrl) == null ? getDescriptor().getWebUrl() : jobWebUrl);
@@ -584,8 +637,7 @@ public class DimensionsSCM extends SCM implements Serializable
         Logger.Debug("Starting job for project '" + this.project + "' ('" + this.folders.length + "')" +
                      ", connecting to " + dmS);
     }
-
-
+	
     /*
      *-----------------------------------------------------------------
      *  FUNCTION SPECIFICATION
@@ -637,7 +689,7 @@ public class DimensionsSCM extends SCM implements Serializable
             if (isCanJobUpdate()) {
                 int version = 2009;
                 long key = dmSCM.login(getJobUserName(),getJobPasswd(),
-                                       getJobDatabase(),getJobServer());
+                                       getJobDatabase(),getJobServer(),build);
 
                 if (key>0) {
                     // Get the server version
@@ -646,21 +698,24 @@ public class DimensionsSCM extends SCM implements Serializable
                     if (version == 0) {
                         version = 2009;
                     }
-                    dmSCM.logout(key);
+                    dmSCM.logout(key,build);
                 }
 
                 // Get the details of the master
                 InetAddress netAddr = InetAddress.getLocalHost();
                 byte[] ipAddr = netAddr.getAddress();
                 String hostname = netAddr.getHostName();
-
-                boolean master = true;
-                // GetHostDetailsTask buildHost = new GetHostDetailsTask(hostname);
-                //master = workspace.act(buildHost);
-				if (nodeName != null && nodeName.length() > 0)
-					master = false;
 				
-
+				boolean master = true;
+				if (isForceAsSlave()) {
+					master = false;
+					Logger.Debug("Forced processing as slave...");
+				} else {
+					Logger.Debug("Checking if master or slave...");
+					if (nodeName != null && nodeName.length() > 0)
+						master = false;
+				}
+				
                 if (master) {
                     // Running on master...
                     listener.getLogger().println("[DIMENSIONS] Running checkout on master...");
@@ -691,6 +746,7 @@ public class DimensionsSCM extends SCM implements Serializable
                                                                    isCanJobDelete(),
                                                                    isCanJobRevert(), isCanJobForce(),
                                                                    isCanJobExpand(), isCanJobNoMetadata(),
+								   isCanJobNoTouch(),
                                                                    (build.getPreviousBuild() == null),
                                                                    getFolders(),version,
                                                                    permissions,eol,
@@ -748,8 +804,8 @@ public class DimensionsSCM extends SCM implements Serializable
             // When are we building files for?
             // Looking for the last successful build and then going forward from there - could use the last build as well
             //
-            // Calendar lastBuildCal = (build.getPreviousBuild() != null) ? build.getPreviousBuild().getTimestamp() : null;
-            Calendar lastBuildCal = (build.getPreviousNotFailedBuild() != null) ? build.getPreviousNotFailedBuild().getTimestamp() : null;
+            Calendar lastBuildCal = (build.getPreviousBuild() != null) ? build.getPreviousBuild().getTimestamp() : null;
+            //Calendar lastBuildCal = (build.getPreviousNotFailedBuild() != null) ? build.getPreviousNotFailedBuild().getTimestamp() : null;
             Calendar nowDateCal = Calendar.getInstance();
 
             TimeZone tz = (getJobTimeZone() != null && getJobTimeZone().length() > 0) ? TimeZone.getTimeZone(getJobTimeZone()) : TimeZone.getDefault();
@@ -763,7 +819,7 @@ public class DimensionsSCM extends SCM implements Serializable
 
             // Connect to Dimensions...
             key = dmSCM.login(getJobUserName(),getJobPasswd(),
-                            getJobDatabase(),getJobServer());
+                            getJobDatabase(),getJobServer(),build);
 
             if (key>0)
             {
@@ -843,7 +899,7 @@ public class DimensionsSCM extends SCM implements Serializable
         }
         finally
         {
-            dmSCM.logout(key);
+            dmSCM.logout(key, build);
         }
         return bRet;
     }
@@ -968,11 +1024,7 @@ public class DimensionsSCM extends SCM implements Serializable
 
         try
         {
-            Calendar lastBuildCal = null;
-            if (project.getLastSuccessfulBuild() != null && project.getLastSuccessfulBuild().getTimestamp() != null)
-                lastBuildCal = project.getLastSuccessfulBuild().getTimestamp();
-            else
-                lastBuildCal = project.getLastBuild().getTimestamp();
+            Calendar lastBuildCal = project.getLastBuild().getTimestamp();
 
             Calendar nowDateCal = Calendar.getInstance();
             TimeZone tz = (getJobTimeZone() != null && getJobTimeZone().length() > 0) ? TimeZone.getTimeZone(getJobTimeZone()) : TimeZone.getDefault();
@@ -1164,6 +1216,9 @@ public class DimensionsSCM extends SCM implements Serializable
             Boolean canJobUpdate = Boolean.valueOf("on".equalsIgnoreCase(req.getParameter("dimensionsscm.canJobUpdate")));
             Boolean canJobExpand = Boolean.valueOf("on".equalsIgnoreCase(req.getParameter("dimensionsscm.canJobExpand")));
             Boolean canJobNoMetadata = Boolean.valueOf("on".equalsIgnoreCase(req.getParameter("dimensionsscm.canJobNoMetadata")));
+            Boolean canJobNoTouch = Boolean.valueOf("on".equalsIgnoreCase(req.getParameter("dimensionsscm.canJobNoTouch")));
+	        Boolean forceAsSlave = Boolean.valueOf("on".equalsIgnoreCase(req.getParameter("dimensionsscm.forceAsSlave")));
+
             String jobUserName = req.getParameter("dimensionsscm.jobUserName");
             String jobPasswd = req.getParameter("dimensionsscm.jobPasswd");
             String jobServer = req.getParameter("dimensionsscm.jobServer");
@@ -1177,8 +1232,11 @@ public class DimensionsSCM extends SCM implements Serializable
                                                   jobServer,jobDatabase,
                                                   canJobUpdate,jobTimeZone,
                                                   jobWebUrl,directory,
-                                                  permissions,eol,canJobExpand,
-                                                  canJobNoMetadata);
+                                                  permissions,eol,
+												  canJobExpand,
+                                                  canJobNoMetadata,
+												  canJobNoTouch,
+												  forceAsSlave);
 
             scm.browser = RepositoryBrowsers.createInstance(DimensionsSCMRepositoryBrowser.class,req,formData,"browser");
             if (scm.dmSCM == null)

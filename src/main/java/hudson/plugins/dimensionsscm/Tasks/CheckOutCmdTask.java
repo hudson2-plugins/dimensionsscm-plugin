@@ -136,6 +136,7 @@ public class CheckOutCmdTask extends GenericCmdTask implements FileCallable<Bool
     private boolean isForce = false;
     private boolean isExpand = false;
     private boolean isNoMetadata = false;
+    private boolean isNoTouch = false;
 
     private String projectId = "";
     private String baseline = null;
@@ -175,6 +176,10 @@ public class CheckOutCmdTask extends GenericCmdTask implements FileCallable<Bool
                 }
             }
 
+            if (version == 2010) {
+                coCmd += " /LEGACY_MODE ";
+            }
+
             String cmd = coCmd;
 
             if (reqId != null && version == 10) {
@@ -207,6 +212,8 @@ public class CheckOutCmdTask extends GenericCmdTask implements FileCallable<Bool
                 cmd += " /EXPAND";
             if (isNoMetadata)
                 cmd += " /NOMETADATA";
+            if (isNoTouch)
+                cmd += " /NOTOUCH";
 
             if (permissions != null && permissions.length() > 0) {
                 if (!permissions.equals("DEFAULT") && reqId == null) {
@@ -214,12 +221,12 @@ public class CheckOutCmdTask extends GenericCmdTask implements FileCallable<Bool
                 }
             }
 
-			if (eol != null && eol.length() > 0) {
+            if (eol != null && eol.length() > 0) {
                 if (!eol.equals("DEFAULT")) {
                     cmd += "/EOL="+eol;
                 }
             }
-			
+
             fmtWriter.println(cmd);
             fmtWriter.flush();
         } catch (Exception e) {
@@ -240,9 +247,10 @@ public class CheckOutCmdTask extends GenericCmdTask implements FileCallable<Bool
                              String requestId, boolean isDelete,
                              boolean isRevert, boolean isForce,
                              boolean isExpand, boolean isNoMetadata,
-                             boolean freshBuild, String[] folders,
+			     boolean isNoTouch,boolean freshBuild, 
+                             String[] folders,
                              int version, String permissions,
-						     String eol,
+                             String eol,
                              FilePath workspace,
                              TaskListener listener) {
 
@@ -263,6 +271,7 @@ public class CheckOutCmdTask extends GenericCmdTask implements FileCallable<Bool
         this.isForce = isForce;
         this.isExpand = isExpand;
         this.isNoMetadata = isNoMetadata;
+	this.isNoTouch = isNoTouch;
         this.folders = folders;
         this.requests = requestId;
         this.baseline = baselineId;
